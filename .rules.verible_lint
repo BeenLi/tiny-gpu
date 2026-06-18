@@ -1,0 +1,9 @@
+-explicit-parameter-storage-type
+-unpacked-dimensions-range-ordering
+-generate-label-prefix
+-no-trailing-spaces
+-line-length
+-case-missing-default
+-parameter-name-style
+-generate-label
+-posix-eof

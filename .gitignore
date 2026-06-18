@@ -6,3 +6,6 @@ gds/**/*.gltf
 
 .DS_Store
 results.xml
+
+# Local verible toolchain binaries (machine-specific, ~43MB)
+.tools/
