@@ -319,6 +319,42 @@ tiny-gpu is setup to simulate the execution of both of the above kernels. Before
 - Download the latest version of sv2v from https://github.com/zachjs/sv2v/releases, unzip it and put the binary in $PATH.
 - Run `mkdir build` in the root directory of this repository.
 
+## Setup on myDevbox (Debian 10 / glibc 2.28)
+
+This box is Debian 10 (buster, glibc 2.28) and only reaches GitHub through the local
+proxy `http://127.0.0.1:5555` (already configured for `github.com` in `~/.gitconfig`).
+The internal `mirrors.byted.org` Debian mirror is fast and direct. The environment is
+already installed; to run the sims:
+
+```sh
+cd ~/autoResearch/tiny-gpu
+source env.sh            # activates the cocotb venv + adds ~/.local/bin to PATH
+make test_matadd         # PASS
+make test_matmul         # PASS
+```
+
+Toolchain as installed here:
+
+| Tool | Version | Location |
+|------|---------|----------|
+| iverilog / vvp | 10.2 | apt, system `/usr/bin` |
+| cocotb | 1.9.2 | repo `.venv` (Python 3.11 via `uv`) |
+| sv2v | v0.0.13 | `~/.local/bin/sv2v` (wrapper) |
+
+Two box-specific gotchas:
+
+- **Use the venv cocotb (1.9.2), not the global one.** `~/.local` has cocotb 2.0 on
+  Python 3.7, which is incompatible: cocotb 2.0 renamed the `MODULE` env var this
+  repo's Makefile relies on, so tests would silently not run. `source env.sh`
+  ensures the venv takes precedence — always source it first.
+- **sv2v runs under a newer glibc.** The official sv2v binary needs GLIBC_2.34, but
+  buster has 2.28. `~/.local/bin/sv2v` is a wrapper that runs the real binary
+  (`~/.local/libexec/sv2v.real`) under glibc 2.36 extracted from a Debian bookworm
+  `libc6` package into `~/.local/glibc236` (system `libgmp` is kept). This is
+  transparent — `make` just calls `sv2v` normally.
+
+See `SETUP_NOTES.md` for the full reproduction details.
+
 Once you've installed the pre-requisites, you can run the kernel simulations with `make test_matadd` and `make test_matmul`.
 
 Executing the simulations will output a log file in `test/logs` with the initial data memory state, complete execution trace of the kernel, and final data memory state.
