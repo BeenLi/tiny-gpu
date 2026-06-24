@@ -34,10 +34,15 @@ module alu (
         end else if (enable) begin
             // Calculate alu_out when core_state = EXECUTE
             if (core_state == 3'b101) begin 
-                if (decoded_alu_output_mux == 1) begin 
-                    // Set values to compare with NZP register in alu_out[2:0]
-                    alu_out_reg <= {5'b0, (rs - rt > 0), (rs - rt == 0), (rs - rt < 0)};
-                end else begin 
+                if (decoded_alu_output_mux == 1) begin
+                    // CMP: set the NZP comparison result in alu_out[2:0].
+                    // Bit order MUST match the instruction's nzp field [11:9] = {N, Z, P}
+                    // (decoder feeds that to decoded_nzp, and pc.sv ANDs index-aligned),
+                    // so bit2=N, bit1=Z, bit0=P.
+                    // NOTE: rs/rt are unsigned, so `rs - rt < 0` can never be true (the
+                    // subtraction wraps around). Compare rs and rt directly instead.
+                    alu_out_reg <= {5'b0, (rs < rt), (rs == rt), (rs > rt)};
+                end else begin
                     // Execute the specified arithmetic instruction
                     case (decoded_alu_arithmetic_mux)
                         ADD: begin 

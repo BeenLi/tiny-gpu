@@ -44,15 +44,16 @@ async def test_matadd(dut):
         threads=threads
     )
 
+    # 地址 0-7 放矩阵 A [0..7]，地址 8-15 放矩阵 B [0..7]，地址 16-23 留给结果 C
     data_memory.display(24)
 
     cycles = 0
     while dut.done.value != 1:
-        data_memory.run()
+        data_memory.run()       # 模拟外部内存响应（带宽受限）
         program_memory.run()
 
         await cocotb.triggers.ReadOnly()
-        format_cycle(dut, cycles)
+        format_cycle(dut, cycles) # 把这一拍所有 core/thread 的状态打印进日志
         
         await RisingEdge(dut.clk)
         cycles += 1

@@ -16,9 +16,9 @@ def format_instruction(instruction: str) -> str:
     rd = format_register(int(instruction[4:8], 2))
     rs = format_register(int(instruction[8:12], 2))
     rt = format_register(int(instruction[12:16], 2))
-    n = "N" if instruction[4] == 1 else ""
-    z = "Z" if instruction[5] == 1 else ""
-    p = "P" if instruction[6] == 1 else ""
+    n = "N" if instruction[4] == "1" else ""
+    z = "Z" if instruction[5] == "1" else ""
+    p = "P" if instruction[6] == "1" else ""
     imm = f"#{int(instruction[8:16], 2)}"
 
     if opcode == "0000":
