@@ -35,12 +35,33 @@
 所有内部内存访问统一用这套异步握手：
 ```
 consumer 侧            controller 侧
-  read_valid  ──"我要读"──→
+  read_valid  ──"我有请求"──→
   read_address ──地址──→
-            ←──"好了"── read_ready
-            ←──数据──── read_data
+            ←──"我处理完了"── read_ready
+            ←──数据──────── read_data
 ```
 这就是 LSU `REQUESTING→WAITING→DONE` 状态机的物理含义。controller / lsu / fetcher 全是它的变体。
+
+#### ⚠️ 这不是 AXI 式数据流握手，而是请求/响应（req/ack）握手
+
+容易踩的反直觉点：标准 AXI 里 `valid` 跟着**数据方向**走（数据产生方拉 valid，接收方拉 ready）。按那个约定，读操作数据是 内存→LSU，应该由内存拉 valid。但这里恰恰相反——**等读数据时等的是 `mem_read_ready`**。
+
+原因：tiny-gpu 复用了名字，语义换成了 req/done：
+
+| 信号 | 谁驱动 | 真实含义 |
+|---|---|---|
+| `*_valid` | **发起方**（LSU/fetcher） | "我有一个**有效请求**"（跟请求方向，不跟数据方向） |
+| `*_ready` | **响应方**（controller/内存） | "**请求处理完、数据已就绪**"（= done/ack） |
+
+正确心智模型：**发起方拉 valid（我有请求）→ 响应方拉 ready（我搞定了）**，本质是 req/ack，`ready` 扮演"完成应答"而非"我能接收"。
+
+**为什么这样设计**：读写共用同一套语义 → 统一对称。
+- 读（[lsu.sv:59-69](../src/lsu.sv#L59-L69)）：拉 `mem_read_valid`，等 `mem_read_ready` → 收 `mem_read_data`
+- 写（[lsu.sv:89-99](../src/lsu.sv#L89-L99)）：拉 `mem_write_valid`，等 `mem_write_ready`（写完）
+
+写操作没有数据回流，若按"产生方拉 valid"会很别扭；req/done 下读写都是"valid=发起请求，ready=目标完成"，于是收敛成同一个 4 状态机。整条 LSU↔controller↔内存 链每一跳都如此（如 [controller.sv:101](../src/controller.sv#L101) 在 RELAYING 拉 `consumer_read_ready` 表示"转交完成"）。
+
+> 真实 AXI 读会分 AR（地址/请求）和 R（数据/响应）两条独立 valid/ready 通道；tiny-gpu 把它们压成一对 `valid/ready`，所以才出现"等读数据却等 ready"这个反直觉点。
 
 ### generate 块要点
 

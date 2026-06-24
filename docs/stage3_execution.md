@@ -88,12 +88,98 @@ alu_out_reg <= {5'b0, (rs < rt), (rs == rt), (rs > rt)};
 2. **测试通过 ≠ 没 bug**：matmul PASS 只覆盖了它用到的路径，N 位 bug 全程没触发。
 3. **实证优先**：靠 iverilog 微测试 + 真实 trace 才看清"bug 存在但被掩盖"的全貌，而非停在推理。
 
-## 阶段 3 进度
+## 五、lsu.sv（异步访存状态机，阶段 3 压轴）
+
+[lsu.sv](../src/lsu.sv)：每线程私有，正是 scheduler `WAIT` 死等的对象。4 状态：`IDLE → REQUESTING → WAITING → DONE`，读(LDR)/写(STR)两段对称 case。
+
+### 读路径逐拍（与 core_state 咬合）
+
+| LSU 状态 | 触发 | 动作 |
+|---|---|---|
+| IDLE | `core_state==REQUEST` | 进 REQUESTING |
+| REQUESTING | 下一拍 | 发请求 `mem_read_valid<=1`, `mem_read_address<=rs` → WAITING |
+| WAITING | 等 `mem_read_ready` | 收数据 `lsu_out<=mem_read_data` → DONE |
+| DONE | `core_state==UPDATE` | 复位回 IDLE |
+
+`rs`=地址、`rt`=数据（写时），落实阶段 1 的 `LDR rd,rs`=`rd=mem[rs]` 和 `STR rs,rt`=`mem[rs]=rt`。
+
+### 与 scheduler WAIT 咬合
+
+scheduler 在 WAIT 轮询 `lsu_state`，只要任一 LSU 在 REQUESTING/WAITING 就卡住。LSU 卡多久 scheduler 卡多久。非访存指令 LSU 恒 IDLE，WAIT 1 拍过。
+
+### req/ack 握手（反直觉点）
+
+等读数据时等的是 `mem_read_ready` 而非 valid——因为这不是 AXI 数据流握手，而是请求/响应：`valid`=发起方"我有请求"，`ready`=响应方"处理完了"。读写共用此语义，详见 [stage2 文档握手小节](stage2_architecture.md)。
+
+### 完整访存流水线（端到端闭环 LDR）
+
+```
+① REQUEST 拍   registers 读 registers[rs] → rs（地址）
+② REQUEST→WAIT  LSU IDLE→REQUESTING→WAITING, 发 mem_read_valid
+③ WAIT 中       controller: 8 LSU 抢 4 通道, 接走请求→访问外部内存
+④ WAIT 中       外部内存返回 → controller 回 ready+data → LSU
+⑤ WAIT 末       LSU WAITING→DONE, lsu_out <= mem_read_data
+⑥ scheduler     所有 LSU DONE → 离开 WAIT 进 EXECUTE
+⑦ UPDATE 拍     registers: reg_input_mux=MEMORY, registers[rd] <= lsu_out
+```
+
+**因果链闭环**：controller 的 4 通道限流 → 第③④步多耗拍 → LSU 在 WAITING 多停 → scheduler 在 WAIT 多停 → kernel 总拍数变多（matadd 178 拍）。这就是"访存延迟是 GPU 核心瓶颈"在代码里的完整体现。
+
+小瑕疵（不影响功能）：[lsu.sv:16](../src/lsu.sv#L16) 拼写 `Sgiansl`；[lsu.sv:84](../src/lsu.sv#L84) 写路径注释复制粘贴成 `Only read when...`。
+
+## 六、pc.sv（程序计数器：两阶段时序 + NZP 跨指令存活）
+
+[pc.sv](../src/pc.sv) 同一 always 块里两个 `if`，被不同 core_state 门控（互斥）：
+
+| 阶段 | 动作 | 代码 |
+|---|---|---|
+| EXECUTE(101) | **算** next_pc（用当前 nzp 判分支） | [pc.sv:42-55](../src/pc.sv#L42-L55) |
+| UPDATE(110) | **存** nzp（把 ALU 比较结果锁进寄存器） | [pc.sv:57-65](../src/pc.sv#L57-L65) |
+
+### 为何分两阶段（数据依赖逼出来的）
+
+- **存 nzp 必须在 UPDATE**：nzp 来自 `alu_out`，而 ALU 只在 EXECUTE 才算出 → 只能在之后的 UPDATE 存。
+- **算 next_pc 必须在 EXECUTE**：scheduler 在 UPDATE 消费 next_pc（[scheduler.sv:104](../src/scheduler.sv#L104)）→ 必须在之前的 EXECUTE 备好。
+
+生产-消费时序把两件事钉在相邻的 EXECUTE/UPDATE 两拍。
+
+### 关键洞察：nzp 跨指令存活
+
+算 next_pc 时读的 nzp，是**更早某条指令**存的，绝不是本条。因为本条的 nzp 要到 UPDATE 才存，而读它的 next_pc 计算在更早的 EXECUTE 已跑完。所以 CMP 和 BRnzp 必须是**两条独立指令、CMP 在前**：
+
+```
+指令 N   = CMP R9, R2
+  EXECUTE: ALU 算 alu_out=比较结果; pc 算 next_pc=PC+1
+  UPDATE : pc 存 nzp <= alu_out  ──┐ 新结果落进寄存器
+指令 N+1 = BRn LOOP                 │ nzp 跨指令存活
+  EXECUTE: pc 读 nzp 算 next_pc ────┘ 用的就是上面这个值
+           (nzp & decoded_nzp)!=0 ? 跳LOOP : PC+1
+  UPDATE : scheduler current_pc <= next_pc
+```
+
+nzp 被 CMP 的 UPDATE 写、被后续 BRnzp 的 EXECUTE 读，中间隔几条指令都行（只要没新 CMP 覆盖）。
+
+### next_pc 三出路
+
+```
+pc_mux==0           → next_pc = current_pc + 1
+pc_mux==1 & 命中     → next_pc = decoded_immediate（跳转）
+pc_mux==1 & 未命中   → next_pc = current_pc + 1
+```
+命中判断 `(nzp & decoded_nzp)!=0` 即阶段 1 的独热掩码集合判断。
+
+### 无 divergence 的 pc 侧证据
+
+每线程都有自己的 PC 单元算 `next_pc[i]`，但 scheduler 只取最后一个喂单一 current_pc——**算 4 份只用 1 份**。ALU 侧产生分歧、pc 侧丢弃分歧。
+
+## 阶段 3 进度（通关）
 
 - [x] scheduler.sv（6 阶段状态机、WAIT 异步、收敛假设）
 - [x] fetcher.sv（取指 3 状态机）
 - [x] decoder.sv（阶段 1 已精读）
 - [x] registers.sv（寄存器堆 + SIMD 注入）
 - [x] alu.sv（算术 + 比较；**发现并修复 NZP bug**）
-- [ ] pc.sv（next_pc 计算 + NZP 存储；阶段 1 已部分覆盖）
-- [ ] lsu.sv（异步访存状态机，阶段 3 压轴，闭环 scheduler 的 WAIT）
+- [x] lsu.sv（异步访存状态机，端到端流水线闭环）
+- [x] pc.sv（两阶段时序 + NZP 跨指令存活）
+
+**15 个源文件全部读完。** 整机数据通路、控制流、访存流水线、SIMD 机制全部打通。

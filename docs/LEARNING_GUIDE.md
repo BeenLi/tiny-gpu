@@ -14,7 +14,8 @@
 
 - [阶段 1：ISA 精读](stage1_isa.md) —— 指令格式、字段复用、控制信号、CMP+BRnzp 与 NZP 独热掩码
 - [阶段 2：自顶向下读架构](stage2_architecture.md) —— gpu/dcr/dispatch/controller/core，valid/ready 握手，EDA 痕迹与累加器时序代价
-- [阶段 3：核内状态机](stage3_execution.md) —— scheduler/fetcher/registers/alu，含 **ALU NZP bug 的发现与修复**
+- [阶段 3：核内状态机](stage3_execution.md) —— scheduler/fetcher/registers/alu/lsu/pc，含 **ALU NZP bug 的发现与修复**
+- [阶段 4：仿真测试框架](stage4_simulation.md) —— Makefile/setup/memory/logger，cocotb 仿真闭环
 
 ---
 
