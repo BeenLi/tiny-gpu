@@ -84,7 +84,16 @@ END:    ...                   ; 重收敛点
 谓词化最早在 **CPU** 上为对抗分支预测失败而生，GPU 把它发挥到极致：
 
 - **Itanium (IA-64)**：**全谓词**架构，几乎每条指令都带 64 个谓词寄存器之一作守卫——谓词化的教科书。
-- **ARM**：经典 ARM 模式**每条指令条件执行**（`ADDEQ`/`MOVNE`…）；AArch64 收敛为条件选择 `CSEL`/`CSINC` 等。
+- **ARM**：经典 A32 模式**每条指令条件执行**——最高 4 位是条件域（`EQ/NE/GT/LT/…`），故 `ADDEQ`=相等才加、`MOVNE`=不等才传；条件查 CPSR 标志（由 `CMP` 或带 `S` 后缀的算术置位）。教科书例子 GCD（整段 if/else 零跳转）：
+
+  ```arm
+  ; gcd(a,b): a in r0, b in r1
+  gcd:    CMP   r0, r1        ; 比较 → 置标志
+          SUBGT r0, r0, r1    ; if a>b : a -= b   （无 S，不改标志）
+          SUBLT r1, r1, r0    ; if a<b : b -= a   （仍看同一次 CMP 的标志）
+          BNE   gcd           ; a!=b 继续
+  ```
+  关键细节：`SUBGT/SUBLT` **不带 `S`** 故不覆盖标志，才能"一次比较驱动多条互斥条件指令"。AArch64 取消了通用条件执行，收敛为条件选择 `CSEL`/`CSINC`/`CCMP`；Thumb-2 用 `IT`(If-Then) 块守卫随后最多 4 条指令。A32 是"每条标量指令都带谓词"的最彻底形态——和 GPU 把谓词放进每条 lane 是同一回事。
 - **x86**：有限谓词化 `CMOV`（条件传送）。
 - **NVIDIA PTX/SASS**：几乎每条指令都可带守卫谓词 `@p`/`@!p`；`setp` 写谓词；`ptxas` 对短分支自动 if-conversion。
 - **AMD GCN/RDNA**：把 mask 显式化为 **`EXEC` 寄存器**（每 wavefront 一个、按 lane 的活跃掩码）。发散控制流由编译器**软件管理**：用向量比较把条件写进 `VCC`/SGPR，再 AND 进 `EXEC`，分支前后保存/恢复 `EXEC`。AMD 这套把"predication"和"divergence mask"**统一成对同一个 EXEC 寄存器的操作**——是理解"两者本是一回事"的最佳实例。
