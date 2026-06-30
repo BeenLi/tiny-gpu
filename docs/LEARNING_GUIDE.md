@@ -16,6 +16,7 @@
 - [阶段 2：自顶向下读架构](stage2_architecture.md) —— gpu/dcr/dispatch/controller/core，valid/ready 握手，EDA 痕迹与累加器时序代价
 - [阶段 3：核内状态机](stage3_execution.md) —— scheduler/fetcher/registers/alu/lsu/pc，含 **ALU NZP bug 的发现与修复**
 - [阶段 4：仿真测试框架](stage4_simulation.md) —— Makefile/setup/memory/logger，cocotb 仿真闭环
+- [阶段 5（一）：Branch Divergence 设计](stage5_branch_divergence.md) / [实现计划](stage5_branch_divergence_plan.md) —— min-PC active mask，per-thread PC + done_mask，自动重收敛
 
 ---
 
@@ -96,6 +97,11 @@ make test_matmul
 2. **给 ISA 加一条新指令**（比如 `MOD` 或 `AND`）—— 需要改 decoder + alu，理解数据通路
 3. **加一个指令 cache** —— README 列的第一个 TODO，中等难度
 4. 更难的：branch divergence、memory coalescing、pipelining
+
+### 进展
+
+- ✅ **Branch divergence（min-PC active mask）** —— 已完成（分支 `stage5-branch-divergence`）。每线程持有 `thread_pc[i]`，每拍 fetch 最小 PC、只执行 `active_mask` 内线程，PC 重合自动重收敛；支持 per-thread RET。验证 kernel：`test_relu`（if/else）+ `test_divloop`（变长循环，partial done_mask）；matadd/matmul 回归零偏移。详见 [设计文档](stage5_branch_divergence.md) 与 [实现计划](stage5_branch_divergence_plan.md)。
+- ⬜ **Warp scheduling（多 warp 驻留 + 交错调度）** —— 第二阶段，待开。
 
 ---
 

@@ -114,6 +114,25 @@ trace 中可直接观察到 mask：`{0,1,2,3} → {0,1} → {2,3} → 收回 {0,
 
 验证均在远端执行：`cd ~/autoResearch/tiny-gpu && source env.sh && make test_*`。
 
+### 8.1 实测结果（2026-06-30，分支 `stage5-branch-divergence`）
+
+| 测试 | 周期数 | 状态 | 说明 |
+|---|---|---|---|
+| `test_relu`（if/else 分叉） | 198 | PASS | Y = `[0,5,0,7,0,6,0,4]` |
+| `test_divloop`（变长循环） | 418 | PASS | Y = `[0,1,2,3]`，partial done_mask |
+| `test_matadd`（回归） | 178 | PASS | 与改造前日志一致（178） |
+| `test_matmul`（回归） | 491 | PASS | 与改造前日志一致（491） |
+
+**回归零偏移**：matadd/matmul 周期数与改造前完全相同，验证了非分叉 kernel 逐拍行为不变（§6）。
+
+**分叉证据（来自 `test_relu` trace）**：同一次运行中 fetcher 同时执行了
+- else 路径 `STR R5, R4`（Y=X[i]，出现 144 次）
+- then 路径 `CONST R6, #0` + `STR R5, R6`（Y=0，分别出现 88 / 144 次）
+
+而 bug 版 lockstep 只会执行 else 路径（then 路径指令一次都不出现）。trace 片段（Core 0）显示 `%threadIdx=0` 的线程（`R4=X[0]=2 < T=4`）停在 **PC 12（then/ZERO 路径）**，与停在 else 路径的线程分道——min-PC 先跑完低 PC 的 else 段（pc10-11），再跑 then 段（pc12-13），最终在 `STR`/`RET` 处重收敛。
+
+**代价**：分叉把两条路径串行化，relu 比"假装收敛"的 lockstep 多花约 28 周期（170 → 198），符合 SIMT 分叉的本质开销。
+
 ## 9. 已知局限与对下一阶段的接口预留
 
 - min-PC 重收敛对**不可归约**控制流非最优，但 tiny-gpu kernel 均为结构化，不受影响。
