@@ -16,7 +16,7 @@
 - [阶段 2：自顶向下读架构](stage2_architecture.md) —— gpu/dcr/dispatch/controller/core，valid/ready 握手，EDA 痕迹与累加器时序代价
 - [阶段 3：核内状态机](stage3_execution.md) —— scheduler/fetcher/registers/alu/lsu/pc，含 **ALU NZP bug 的发现与修复**
 - [阶段 4：仿真测试框架](stage4_simulation.md) —— Makefile/setup/memory/logger，cocotb 仿真闭环
-- [阶段 5（一）：Branch Divergence 设计](stage5_branch_divergence.md) / [实现计划](stage5_branch_divergence_plan.md) —— min-PC active mask，per-thread PC + done_mask，自动重收敛
+- [阶段 5（一）：Branch Divergence 设计](stage5_branch_divergence.md) / [实现计划](stage5_branch_divergence_plan.md) / [理论专题](stage5_branch_divergence_theory.md) —— min-PC active mask，per-thread PC + done_mask，自动重收敛；理论篇涵盖 SIMT/IPDOM 栈/min-PC/ITS 谱系与利用率代价
 
 ---
 
