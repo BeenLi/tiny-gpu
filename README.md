@@ -4,9 +4,14 @@ A minimal GPU implementation in Verilog optimized for learning about how GPUs wo
 
 Built with <15 files of fully documented Verilog, complete documentation on architecture & ISA, working matrix addition/multiplication kernels, and full support for kernel simulation & execution traces.
 
+> [!NOTE]
+>
+> **This is a learning fork.** On top of the original naive baseline, it adds branch divergence, predication, and warp scheduling (built and verified incrementally as stages 5–7). See [Fork Extensions](#fork-extensions) for the summary, and [`docs/`](docs/) / [`docs/LEARNING_GUIDE.md`](docs/LEARNING_GUIDE.md) for the full write-ups.
+
 ### Table of Contents
 
 - [Overview](#overview)
+- [Fork Extensions](#fork-extensions)
 - [Architecture](#architecture)
   - [GPU](#gpu)
   - [Memory](#memory)
@@ -53,6 +58,19 @@ This project is primarily focused on exploring:
 3. **Memory** - How does a GPU work around the constraints of limited memory bandwidth?
 
 After understanding the fundamentals laid out in this project, you can checkout the [advanced functionality section](#advanced-functionality) to understand some of the most important optimizations made in production grade GPUs (that are more challenging to implement) which improve performance.
+
+# Fork Extensions
+
+> [!NOTE]
+>
+> This section describes features **added in this fork** on top of the original naive baseline. They were built and verified incrementally as a learning exercise (stages 5–7); each has a design doc, implementation plan, and cycle-count results under [`docs/`](docs/), indexed by [`docs/LEARNING_GUIDE.md`](docs/LEARNING_GUIDE.md).
+
+The sections after this one describe the **original naive baseline**. Inline `> [!NOTE]` callouts flag where this fork's behavior now differs. What the fork adds:
+
+- **Branch divergence (min-PC active mask).** Each thread carries its own PC. Every cycle the core fetches the *minimum* PC among running threads and executes only the threads sitting at that PC (`active_mask`); paths reconverge automatically when PCs coincide, and a thread that hits `RET` retires via a `done_mask`. This replaces the baseline's "all threads always converge" assumption. Verified with `test_relu` (if/else) and `test_divloop` (data-dependent loop trip counts).
+- **Predication (`PSTR`).** A predicated-store instruction (opcode `1010`) that reuses the `BRnzp` condition field — it commits a store only where `(nzp & cond) != 0` — as a branch-free (if-conversion) alternative to divergence. Branch-free ReLU runs 198 → 176 cycles.
+- **Warp scheduling (switch-on-stall).** Each core holds `WARPS_PER_CORE` (default 2) resident warps. The 6-stage FSM is per-warp; when the active warp issues a `LDR`/`STR` it parks and the scheduler round-robin switches to a ready warp, while the parked warp's LSU drains in the background — hiding memory latency. `test_warpadd` runs 348 → ~274 cycles (~21% fewer).
+- **Intra-warp divergence + warp scheduling, combined (current state of the tree).** The per-thread divergence machinery is folded into *each* warp of the switch-on-stall scheduler, so branchy kernels run correctly across multiple resident warps per core. Verified with `test_relu`, `test_divloop`, and `test_relu_warpsched` (16 threads → 2 diverging warps per core).
 
 # Architecture
 
@@ -130,6 +148,10 @@ Each core has a number of compute resources, often built around a certain number
 
 In this simplified GPU, each core processed one **block** at a time, and for each thread in a block, the core has a dedicated ALU, LSU, PC, and register file. Managing the execution of thread instructions on these resources is one of the most challening problems in GPUs.
 
+> [!NOTE]
+>
+> **In this fork,** each core holds `WARPS_PER_CORE` (default 2) resident blocks/warps at once and interleaves them with switch-on-stall scheduling — see [Fork Extensions](#fork-extensions).
+
 ### Scheduler
 
 Each core has a single scheduler that manages the execution of threads.
@@ -137,6 +159,10 @@ Each core has a single scheduler that manages the execution of threads.
 The tiny-gpu scheduler executes instructions for a single block to completion before picking up a new block, and it executes instructions for all threads in-sync and sequentially.
 
 In more advanced schedulers, techniques like **pipelining** are used to stream the execution of multiple instructions subsequent instructions to maximize resource utilization before previous instructions are fully complete. Additionally, **warp scheduling** can be use to execute multiple batches of threads within a block in parallel.
+
+> [!NOTE]
+>
+> **In this fork,** the scheduler is no longer lockstep-per-block: it runs a per-warp 6-stage FSM with **switch-on-stall warp scheduling** (park on `LDR`/`STR`, switch to a ready warp) and per-thread **branch divergence** (min-PC active mask) inside each warp. See [Fork Extensions](#fork-extensions).
 
 The main constraint the scheduler has to work around is the latency associated with loading & storing data from global memory. While most instructions can be executed synchronously, these load-store operations are asynchronous, meaning the rest of the instruction execution has to be built around these long wait times.
 
@@ -178,11 +204,15 @@ Since threads are processed in parallel, tiny-gpu assumes that all threads "conv
 
 In real GPUs, individual threads can branch to different PCs, causing **branch divergence** where a group of threads threads initially being processed together has to split out into separate execution.
 
+> [!NOTE]
+>
+> **This fork lifts that assumption.** Each thread has its own PC; the core fetches the minimum PC among running threads and executes only the threads at that PC, reconverging automatically when PCs meet. See [Branch divergence in Fork Extensions](#fork-extensions).
+
 # ISA
 
 ![ISA](/docs/images/isa.png)
 
-tiny-gpu implements a simple 11 instruction ISA built to enable simple kernels for proof-of-concept like matrix addition & matrix multiplication (implementation further down on this page).
+tiny-gpu implements a simple 11 instruction ISA built to enable simple kernels for proof-of-concept like matrix addition & matrix multiplication (implementation further down on this page). _(This fork adds a 12th instruction, `PSTR`, for predication — see below and [Fork Extensions](#fork-extensions). The ISA diagram above shows the original 11.)_
 
 For these purposes, it supports the following instructions:
 
@@ -191,6 +221,7 @@ For these purposes, it supports the following instructions:
 - `ADD`, `SUB`, `MUL`, `DIV` - Basic arithmetic operations to enable tensor math.
 - `LDR` - Load data from global memory.
 - `STR` - Store data into global memory.
+- `PSTR` - _(this fork)_ Predicated store: like `STR`, but commits only where the thread's `NZP` matches the instruction's condition field — a branch-free alternative to divergence.
 - `CONST` - Load a constant value into a register.
 - `RET` - Signal that the current thread has reached the end of execution.
 
@@ -397,11 +428,19 @@ This helps to maximize resource utilization within cores as resources are not si
 
 ### Warp Scheduling
 
+> [!TIP]
+>
+> ✅ **Implemented in this fork** (switch-on-stall) — see [Fork Extensions](#fork-extensions).
+
 Another strategy used to maximize resource utilization on course is **warp scheduling.** This approach involves breaking up blocks into individual batches of theads that can be executed together.
 
 Multiple warps can be executed on a single core simultaneously by executing instructions from one warp while another warp is waiting. This is similar to pipelining, but dealing with instructions from different threads.
 
 ### Branch Divergence
+
+> [!TIP]
+>
+> ✅ **Implemented in this fork** (min-PC active mask, with automatic reconvergence; also a predication alternative via `PSTR`) — see [Fork Extensions](#fork-extensions).
 
 tiny-gpu assumes that all threads in a single batch end up on the same PC after each instruction, meaning that threads can be executed in parallel for their entire lifetime.
 
@@ -417,9 +456,11 @@ This is useful for cases where threads need to exchange shared data with each ot
 
 Updates I want to make in the future to improve the design, anyone else is welcome to contribute as well:
 
+- [x] Add basic branch divergence — _done in this fork (min-PC active mask); see [Fork Extensions](#fork-extensions)_
+- [x] Add warp scheduling — _done in this fork (switch-on-stall)_
+- [x] Add predication (`PSTR`) as a branch-free alternative — _done in this fork_
 - [ ] Add a simple cache for instructions
 - [ ] Build an adapter to use GPU with Tiny Tapeout 7
-- [ ] Add basic branch divergence
 - [ ] Add basic memory coalescing
 - [ ] Add basic pipelining
 - [ ] Optimize control flow and use of registers to improve cycle time
