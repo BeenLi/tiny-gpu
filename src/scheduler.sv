@@ -72,10 +72,14 @@ module scheduler #(
             for (k=1; k<=WARPS_PER_CORE; k=k+1) begin
                 cand = ((current_warp + k) >= WARPS_PER_CORE)
                         ? (current_warp + k - WARPS_PER_CORE) : (current_warp + k);
+                // 这拍就能干活的 warp
                 if (!ready_found &&
                     ((warp_state[cand]==FETCH) || (warp_state[cand]==WAIT && !lsu_busy[cand]))) begin
                     ready_found = 1'b1; ready_warp = cand;
                 end
+                // 还没退休的 warp (自己也算); 
+                // 每个 ready 都是 live，但 live 不一定 ready——
+                // 差就差在"挂起且 LSU 仍忙"的 warp：它活着，但这拍推不动。
                 if (!live_found && (warp_state[cand]!=DONE)) begin
                     live_found = 1'b1; live_warp = cand;
                 end
