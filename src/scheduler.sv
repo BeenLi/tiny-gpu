@@ -31,7 +31,7 @@ module scheduler #(
     output wire [7:0] current_pc,
     output reg  [7:0] warp_pc [WARPS_PER_CORE-1:0],
     output reg  [2:0] warp_state [WARPS_PER_CORE-1:0],
-    output reg  [$clog2(WARPS_PER_CORE)-1:0] current_warp,
+    output reg  [(WARPS_PER_CORE > 1 ? $clog2(WARPS_PER_CORE) : 1)-1:0] current_warp,
     output wire [2:0] core_state,
     output reg  done
 );
@@ -44,9 +44,9 @@ module scheduler #(
 
     integer w, i, k;
     reg [WARPS_PER_CORE-1:0] lsu_busy;   // per warp: 任一活跃 LSU 仍 REQUESTING/WAITING
-    reg ready_found; reg [$clog2(WARPS_PER_CORE)-1:0] ready_warp; // ready = FETCH | (WAIT & !busy)
-    reg live_found;  reg [$clog2(WARPS_PER_CORE)-1:0] live_warp;  // live  = state != DONE
-    reg [$clog2(WARPS_PER_CORE)-1:0] cand;
+    reg ready_found; reg [(WARPS_PER_CORE > 1 ? $clog2(WARPS_PER_CORE) : 1)-1:0] ready_warp; // ready = FETCH | (WAIT & !busy)
+    reg live_found;  reg [(WARPS_PER_CORE > 1 ? $clog2(WARPS_PER_CORE) : 1)-1:0] live_warp;  // live  = state != DONE
+    reg [(WARPS_PER_CORE > 1 ? $clog2(WARPS_PER_CORE) : 1)-1:0] cand;
 
     always @(posedge clk) begin
         if (reset) begin
@@ -121,8 +121,6 @@ module scheduler #(
                             if (warp_state[ready_warp]==WAIT) warp_state[ready_warp] <= EXECUTE;
                         end else if (live_found) begin
                             current_warp <= live_warp;
-                        end else begin
-                            done <= 1;                                  // 全 warp DONE
                         end
                     end else begin
                         warp_pc[current_warp] <= warp_next_pc[current_warp];

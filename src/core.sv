@@ -46,7 +46,7 @@ module core #(
     // scheduler <-> core
     wire [7:0] current_pc;
     wire [2:0] core_state;
-    wire [$clog2(WARPS_PER_CORE)-1:0] current_warp;
+    wire [(WARPS_PER_CORE > 1 ? $clog2(WARPS_PER_CORE) : 1)-1:0] current_warp;
     wire [7:0] warp_pc [WARPS_PER_CORE-1:0];
     wire [2:0] warp_state [WARPS_PER_CORE-1:0];
     wire [7:0] warp_next_pc [WARPS_PER_CORE-1:0];
