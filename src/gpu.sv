@@ -15,7 +15,8 @@ module gpu #(
     parameter PROGRAM_MEM_DATA_BITS = 16,    // Number of bits in program memory value (16 bit instruction)
     parameter PROGRAM_MEM_NUM_CHANNELS = 1,  // Number of concurrent channels for sending requests to program memory
     parameter NUM_CORES = 2,                 // Number of cores to include in this GPU
-    parameter THREADS_PER_BLOCK = 4          // Number of threads to handle per block (determines the compute resources of each core)
+    parameter THREADS_PER_BLOCK = 4,         // Number of threads to handle per block (determines the compute resources of each core)
+    parameter WARPS_PER_CORE = 2             // Number of warps per core (stage 6: warp scheduling)
 ) (
     input wire clk,
     input wire reset,
@@ -51,11 +52,11 @@ module gpu #(
     reg [NUM_CORES-1:0] core_start;
     reg [NUM_CORES-1:0] core_reset;
     reg [NUM_CORES-1:0] core_done;
-    reg [7:0] core_block_id [NUM_CORES-1:0];
-    reg [$clog2(THREADS_PER_BLOCK):0] core_thread_count [NUM_CORES-1:0];
+    reg [7:0] core_warp_block_id [NUM_CORES*WARPS_PER_CORE-1:0];
+    reg [$clog2(THREADS_PER_BLOCK):0] core_warp_thread_count [NUM_CORES*WARPS_PER_CORE-1:0];
 
     // LSU <> Data Memory Controller Channels
-    localparam NUM_LSUS = NUM_CORES * THREADS_PER_BLOCK;
+    localparam NUM_LSUS = NUM_CORES * WARPS_PER_CORE * THREADS_PER_BLOCK;
     reg [NUM_LSUS-1:0] lsu_read_valid;
     reg [DATA_MEM_ADDR_BITS-1:0] lsu_read_address [NUM_LSUS-1:0];
     reg [NUM_LSUS-1:0] lsu_read_ready;
@@ -136,7 +137,8 @@ module gpu #(
     // Dispatcher
     dispatch #(
         .NUM_CORES(NUM_CORES),
-        .THREADS_PER_BLOCK(THREADS_PER_BLOCK)
+        .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
+        .WARPS_PER_CORE(WARPS_PER_CORE)
     ) dispatch_instance (
         .clk(clk),
         .reset(reset),
@@ -145,8 +147,8 @@ module gpu #(
         .core_done(core_done),
         .core_start(core_start),
         .core_reset(core_reset),
-        .core_block_id(core_block_id),
-        .core_thread_count(core_thread_count),
+        .core_warp_block_id(core_warp_block_id),
+        .core_warp_thread_count(core_warp_thread_count),
         .done(done)
     );
 
@@ -154,21 +156,34 @@ module gpu #(
     genvar i;
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : cores
+            // Per-core warp metadata slices (registered pass-through from flat dispatch outputs)
+            reg [7:0] this_warp_block_id [WARPS_PER_CORE-1:0];
+            reg [$clog2(THREADS_PER_BLOCK):0] this_warp_thread_count [WARPS_PER_CORE-1:0];
+
+            genvar wv;
+            for (wv = 0; wv < WARPS_PER_CORE; wv = wv + 1) begin : warp_slice
+                always @(posedge clk) begin
+                    this_warp_block_id[wv] <= core_warp_block_id[i*WARPS_PER_CORE + wv];
+                    this_warp_thread_count[wv] <= core_warp_thread_count[i*WARPS_PER_CORE + wv];
+                end
+            end
+
             // EDA: We create separate signals here to pass to cores because of a requirement
             // by the OpenLane EDA flow (uses Verilog 2005) that prevents slicing the top-level signals
-            reg [THREADS_PER_BLOCK-1:0] core_lsu_read_valid;
-            reg [DATA_MEM_ADDR_BITS-1:0] core_lsu_read_address [THREADS_PER_BLOCK-1:0];
-            reg [THREADS_PER_BLOCK-1:0] core_lsu_read_ready;
-            reg [DATA_MEM_DATA_BITS-1:0] core_lsu_read_data [THREADS_PER_BLOCK-1:0];
-            reg [THREADS_PER_BLOCK-1:0] core_lsu_write_valid;
-            reg [DATA_MEM_ADDR_BITS-1:0] core_lsu_write_address [THREADS_PER_BLOCK-1:0];
-            reg [DATA_MEM_DATA_BITS-1:0] core_lsu_write_data [THREADS_PER_BLOCK-1:0];
-            reg [THREADS_PER_BLOCK-1:0] core_lsu_write_ready;
+            // Widened to W*T per core for warp-aware data memory ports
+            reg [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0] core_lsu_read_valid;
+            reg [DATA_MEM_ADDR_BITS-1:0] core_lsu_read_address [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0];
+            reg [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0] core_lsu_read_ready;
+            reg [DATA_MEM_DATA_BITS-1:0] core_lsu_read_data [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0];
+            reg [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0] core_lsu_write_valid;
+            reg [DATA_MEM_ADDR_BITS-1:0] core_lsu_write_address [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0];
+            reg [DATA_MEM_DATA_BITS-1:0] core_lsu_write_data [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0];
+            reg [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0] core_lsu_write_ready;
 
             // Pass through signals between LSUs and data memory controller
             genvar j;
-            for (j = 0; j < THREADS_PER_BLOCK; j = j + 1) begin
-                localparam lsu_index = i * THREADS_PER_BLOCK + j;
+            for (j = 0; j < WARPS_PER_CORE*THREADS_PER_BLOCK; j = j + 1) begin : lsu_passthrough
+                localparam lsu_index = i * (WARPS_PER_CORE * THREADS_PER_BLOCK) + j;
                 always @(posedge clk) begin 
                     lsu_read_valid[lsu_index] <= core_lsu_read_valid[j];
                     lsu_read_address[lsu_index] <= core_lsu_read_address[j];
@@ -190,13 +205,14 @@ module gpu #(
                 .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS),
                 .PROGRAM_MEM_DATA_BITS(PROGRAM_MEM_DATA_BITS),
                 .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
+                .WARPS_PER_CORE(WARPS_PER_CORE)
             ) core_instance (
                 .clk(clk),
                 .reset(core_reset[i]),
                 .start(core_start[i]),
                 .done(core_done[i]),
-                .block_id(core_block_id[i]),
-                .thread_count(core_thread_count[i]),
+                .warp_block_id(this_warp_block_id),
+                .warp_thread_count(this_warp_thread_count),
                 
                 .program_mem_read_valid(fetcher_read_valid[i]),
                 .program_mem_read_address(fetcher_read_address[i]),
