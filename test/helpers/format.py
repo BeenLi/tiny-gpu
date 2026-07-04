@@ -133,6 +133,10 @@ def format_cycle(dut, cycle_id: int, thread_id: Optional[int] = None):
         )
 
         sched = _safe(lambda: ci.scheduler_instance, None)
+        # Read the whole packed active_mask vector once (Icarus VPI cannot bit-index
+        # a packed reg, but can read the full signal value as a binary string).
+        # The string is MSB-first, so bit p is at index len-1-p.
+        amask_bits = _safe(lambda: str(sched.active_mask.value), "") if sched is not None else ""
         warps = _safe(lambda: list(ci.warps), [])
         for w, warp in enumerate(warps):
             wstate = _safe(lambda: format_core_state(str(warp.threads[0].alu_instance.core_state.value)))
@@ -143,9 +147,22 @@ def format_cycle(dut, cycle_id: int, thread_id: Optional[int] = None):
             for t, thread in enumerate(threads):
                 p = w * len(threads) + t
                 lsu = _safe(lambda: format_lsu_state(str(thread.lsu_instance.lsu_state.value)))
-                act = _safe(lambda: int(sched.active_mask[p].value))
-                tpc = _safe(lambda: int(str(sched.thread_pc[p].value), 2))
+                # Slice active_mask from the full binary string instead of bit-indexing
+                act = amask_bits[len(amask_bits)-1-p] if (amask_bits and p < len(amask_bits)) else "?"
+                # thread_pc is an unpacked array; try direct index first, then list fallback
+                def _tpc(s=sched, idx=p):
+                    try:
+                        return int(str(s.thread_pc[idx].value), 2)
+                    except Exception:
+                        pass
+                    try:
+                        return int(str(list(s.thread_pc)[idx].value), 2)
+                    except Exception:
+                        return None
+                tpc = _tpc() if sched is not None else None
                 rs = _safe(lambda: int(str(thread.register_instance.rs.value), 2))
                 rt = _safe(lambda: int(str(thread.register_instance.rt.value), 2))
                 regs = _safe(lambda: format_registers([str(item.value) for item in thread.register_instance.registers]))
-                logger.debug(f"    thread {w}.{t}: act={act} tpc={tpc} lsu={lsu}  RS={rs} RT={rt}  [{regs}]")
+                # Only include tpc in the log line if it returned a real value
+                tpc_str = f" tpc={tpc}" if tpc is not None else ""
+                logger.debug(f"    thread {w}.{t}: act={act}{tpc_str} lsu={lsu}  RS={rs} RT={rt}  [{regs}]")
