@@ -76,9 +76,7 @@ module dispatch #(
                             end
                         end
                         core_batch_count[c] <= cnt;
-                        blocks_dispatched = blocks_dispatched +
-                            (((total_blocks - blocks_dispatched) < WARPS_PER_CORE)
-                                ? (total_blocks - blocks_dispatched) : WARPS_PER_CORE);
+                        blocks_dispatched = blocks_dispatched + cnt; // = min(W, total_blocks - blocks_dispatched)
                         core_start[c] <= 1;
                     end
                 end
