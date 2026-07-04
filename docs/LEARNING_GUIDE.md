@@ -16,7 +16,7 @@
 - [阶段 2：自顶向下读架构](stage2_architecture.md) —— gpu/dcr/dispatch/controller/core，valid/ready 握手，EDA 痕迹与累加器时序代价
 - [阶段 3：核内状态机](stage3_execution.md) —— scheduler/fetcher/registers/alu/lsu/pc，含 **ALU NZP bug 的发现与修复**
 - [阶段 4：仿真测试框架](stage4_simulation.md) —— Makefile/setup/memory/logger，cocotb 仿真闭环
-- [阶段 5（一）：Branch Divergence 设计](stage5_branch_divergence.md) / [实现计划](stage5_branch_divergence_plan.md) / [理论专题](stage5_branch_divergence_theory.md) / [Predication 专题](stage5_predication.md) —— min-PC active mask，per-thread PC + done_mask，自动重收敛；理论篇涵盖 SIMT/IPDOM 栈/min-PC/ITS 谱系与利用率代价；谓词篇讲 if-conversion 与 active mask 的同构
+- [阶段 5（一）：Branch Divergence 设计](stage5_branch_divergence.md) / [实现计划](stage5_branch_divergence_plan.md) / [理论专题](stage5_branch_divergence_theory.md) / [Predication 专题](stage5_predication.md) / [谓词化实验](stage5_predication_experiment.md) —— min-PC active mask，per-thread PC + done_mask，自动重收敛；理论篇涵盖 SIMT/IPDOM 栈/min-PC/ITS 谱系与利用率代价；谓词篇讲 if-conversion 与 active mask 的同构；实验篇用新增指令 PSTR 把 ReLU 写成无分支版，实测 198→176 cycle
 
 ---
 
@@ -101,6 +101,7 @@ make test_matmul
 ### 进展
 
 - ✅ **Branch divergence（min-PC active mask）** —— 已完成（分支 `stage5-branch-divergence`）。每线程持有 `thread_pc[i]`，每拍 fetch 最小 PC、只执行 `active_mask` 内线程，PC 重合自动重收敛；支持 per-thread RET。验证 kernel：`test_relu`（if/else）+ `test_divloop`（变长循环，partial done_mask）；matadd/matmul 回归零偏移。详见 [设计文档](stage5_branch_divergence.md) 与 [实现计划](stage5_branch_divergence_plan.md)。
+- ✅ **Predication 对照实验（PSTR）** —— 已完成（分支 `stage5-predication`）。新增谓词化存储指令 `PSTR`（复用 BRnzp 的 `(nzp & cond)!=0`），把阈值 ReLU 写成**无分支**版：两条 PSTR 直线条件提交、无 min-PC 串行。实测 **198→176 cycle（省 22 拍）**，回归零偏移。分析了「分叉块纯赚、收敛块反而更慢」的谓词权衡。详见 [谓词化实验](stage5_predication_experiment.md)。
 - ⬜ **Warp scheduling（多 warp 驻留 + 交错调度）** —— 第二阶段，待开。
 
 ---

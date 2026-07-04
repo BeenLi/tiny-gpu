@@ -1,6 +1,8 @@
 # 阶段 5 理论专题：Predication（谓词化）
 
 > 配套 [stage5_branch_divergence_theory.md](stage5_branch_divergence_theory.md)。分叉/重收敛是"遇到分支后硬件怎么办"；predication 是"干脆不生成分支"——它和 active mask 是同一枚硬币的两面，是理解 GPU 控制流的另一半。
+>
+> **动手落地见 [谓词化 ReLU 对照实验](stage5_predication_experiment.md)**：给 tiny-gpu 加了显式谓词指令 `PSTR`，把 ReLU 写成无分支版，实测 198→176 cycle，并验证了「分叉块纯赚、收敛块反而更慢」的谓词权衡。
 
 ---
 
