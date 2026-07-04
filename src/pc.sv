@@ -29,9 +29,12 @@ module pc #(
 
     // Current & Next PCs
     input reg [PROGRAM_MEM_ADDR_BITS-1:0] current_pc,
-    output reg [PROGRAM_MEM_ADDR_BITS-1:0] next_pc
+    output reg [PROGRAM_MEM_ADDR_BITS-1:0] next_pc,
+
+    // Per-thread NZP register, exposed so predicated instructions (PSTR) can be
+    // gated by (nzp & cond) outside this module. Set by CMP, read by BRnzp & PSTR.
+    output reg [2:0] nzp
 );
-    reg [2:0] nzp;
 
     always @(posedge clk) begin
         if (reset) begin

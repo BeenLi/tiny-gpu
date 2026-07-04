@@ -54,7 +54,8 @@ module core #(
     reg [1:0] lsu_state[THREADS_PER_BLOCK-1:0];
     reg [7:0] lsu_out[THREADS_PER_BLOCK-1:0];
     wire [7:0] alu_out[THREADS_PER_BLOCK-1:0];
-    
+    wire [2:0] thread_nzp[THREADS_PER_BLOCK-1:0];  // per-thread NZP (from each pc), for PSTR predicate
+
     // Decoded Instruction Signals
     reg [3:0] decoded_rd_address;
     reg [3:0] decoded_rs_address;
@@ -66,6 +67,7 @@ module core #(
     reg decoded_reg_write_enable;           // Enable writing to a register
     reg decoded_mem_read_enable;            // Enable reading from memory
     reg decoded_mem_write_enable;           // Enable writing to memory
+    reg decoded_mem_pred_enable;            // Predicated store (PSTR): gate mem write by NZP
     reg decoded_nzp_write_enable;           // Enable writing to NZP register
     reg [1:0] decoded_reg_input_mux;        // Select input to register
     reg [1:0] decoded_alu_arithmetic_mux;   // Select arithmetic operation
@@ -104,6 +106,7 @@ module core #(
         .decoded_reg_write_enable(decoded_reg_write_enable),
         .decoded_mem_read_enable(decoded_mem_read_enable),
         .decoded_mem_write_enable(decoded_mem_write_enable),
+        .decoded_mem_pred_enable(decoded_mem_pred_enable),
         .decoded_nzp_write_enable(decoded_nzp_write_enable),
         .decoded_reg_input_mux(decoded_reg_input_mux),
         .decoded_alu_arithmetic_mux(decoded_alu_arithmetic_mux),
@@ -158,6 +161,9 @@ module core #(
                 .core_state(core_state),
                 .decoded_mem_read_enable(decoded_mem_read_enable),
                 .decoded_mem_write_enable(decoded_mem_write_enable),
+                // PSTR predicate: plain STR (pred_enable=0) always writes; PSTR writes only
+                // where this thread's NZP matches the condition field (decoded_nzp[11:9]).
+                .mem_write_predicate_ok((!decoded_mem_pred_enable) || ((thread_nzp[i] & decoded_nzp) != 3'b0)),
                 .mem_read_valid(data_mem_read_valid[i]),
                 .mem_read_address(data_mem_read_address[i]),
                 .mem_read_ready(data_mem_read_ready[i]),
@@ -210,7 +216,8 @@ module core #(
                 .decoded_pc_mux(decoded_pc_mux),
                 .alu_out(alu_out[i]),
                 .current_pc(thread_pc[i]),
-                .next_pc(next_pc[i])
+                .next_pc(next_pc[i]),
+                .nzp(thread_nzp[i])
             );
         end
     endgenerate

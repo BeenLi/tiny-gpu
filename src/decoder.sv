@@ -22,6 +22,7 @@ module decoder (
     output reg decoded_reg_write_enable,           // Enable writing to a register
     output reg decoded_mem_read_enable,            // Enable reading from memory
     output reg decoded_mem_write_enable,           // Enable writing to memory
+    output reg decoded_mem_pred_enable,            // Predicated store (PSTR): gate mem write by NZP
     output reg decoded_nzp_write_enable,           // Enable writing to NZP register
     output reg [1:0] decoded_reg_input_mux,        // Select input to register
     output reg [1:0] decoded_alu_arithmetic_mux,   // Select arithmetic operation
@@ -41,6 +42,7 @@ module decoder (
         LDR = 4'b0111,
         STR = 4'b1000,
         CONST = 4'b1001,
+        PSTR = 4'b1010,
         RET = 4'b1111;
 
     always @(posedge clk) begin 
@@ -53,13 +55,14 @@ module decoder (
             decoded_reg_write_enable <= 0;
             decoded_mem_read_enable <= 0;
             decoded_mem_write_enable <= 0;
+            decoded_mem_pred_enable <= 0;
             decoded_nzp_write_enable <= 0;
             decoded_reg_input_mux <= 0;
             decoded_alu_arithmetic_mux <= 0;
             decoded_alu_output_mux <= 0;
             decoded_pc_mux <= 0;
             decoded_ret <= 0;
-        end else begin 
+        end else begin
             // Decode when core_state = DECODE
             if (core_state == 3'b010) begin 
                 // Get instruction signals from instruction every time
@@ -73,6 +76,7 @@ module decoder (
                 decoded_reg_write_enable <= 0;
                 decoded_mem_read_enable <= 0;
                 decoded_mem_write_enable <= 0;
+                decoded_mem_pred_enable <= 0;
                 decoded_nzp_write_enable <= 0;
                 decoded_reg_input_mux <= 0;
                 decoded_alu_arithmetic_mux <= 0;
@@ -117,10 +121,17 @@ module decoder (
                         decoded_reg_input_mux <= 2'b01;
                         decoded_mem_read_enable <= 1;
                     end
-                    STR: begin 
+                    STR: begin
                         decoded_mem_write_enable <= 1;
                     end
-                    CONST: begin 
+                    PSTR: begin
+                        // Predicated store: same datapath as STR, but the actual memory
+                        // write is gated per-thread in core.sv by (nzp & decoded_nzp)!=0.
+                        // Condition lives in instruction[11:9] -> already decoded_nzp.
+                        decoded_mem_write_enable <= 1;
+                        decoded_mem_pred_enable <= 1;
+                    end
+                    CONST: begin
                         decoded_reg_write_enable <= 1;
                         decoded_reg_input_mux <= 2'b10;
                     end

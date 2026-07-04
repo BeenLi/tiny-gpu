@@ -16,6 +16,7 @@ module lsu (
     // Memory Control Sgiansl
     input reg decoded_mem_read_enable,
     input reg decoded_mem_write_enable,
+    input reg mem_write_predicate_ok, // Predicated store (PSTR): 0 squashes this lane's write
 
     // Registers
     input reg [7:0] rs,
@@ -77,8 +78,11 @@ module lsu (
                 endcase
             end
 
-            // If memory write enable is triggered (STR instruction)
-            if (decoded_mem_write_enable) begin 
+            // If memory write enable is triggered (STR / PSTR instruction).
+            // For PSTR, mem_write_predicate_ok=0 squashes this lane's write entirely:
+            // lsu_state stays IDLE -> no request issued, no WAIT stall, no memory write.
+            // For plain STR, core.sv drives mem_write_predicate_ok=1 (behavior unchanged).
+            if (decoded_mem_write_enable && mem_write_predicate_ok) begin
                 case (lsu_state)
                     IDLE: begin
                         // Only read when core_state = REQUEST
