@@ -156,16 +156,19 @@ module gpu #(
     genvar i;
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : cores
-            // Per-core warp metadata slices (registered pass-through from flat dispatch outputs)
-            reg [7:0] this_warp_block_id [WARPS_PER_CORE-1:0];
-            reg [$clog2(THREADS_PER_BLOCK):0] this_warp_thread_count [WARPS_PER_CORE-1:0];
+            // Per-core warp metadata slices (COMBINATIONAL pass-through from flat dispatch outputs).
+            // Must be combinational: dispatch asserts core_start[i] and core_warp_thread_count[i]
+            // on the same edge; the scheduler samples warp_thread_count when it first sees start,
+            // so a registered pass-through would feed it a stale (zero) thread_count -> warps wrongly
+            // marked DONE at IDLE. Keeping them as separate per-core signals still satisfies the
+            // OpenLane no-top-level-slicing requirement.
+            wire [7:0] this_warp_block_id [WARPS_PER_CORE-1:0];
+            wire [$clog2(THREADS_PER_BLOCK):0] this_warp_thread_count [WARPS_PER_CORE-1:0];
 
             genvar wv;
             for (wv = 0; wv < WARPS_PER_CORE; wv = wv + 1) begin : warp_slice
-                always @(posedge clk) begin
-                    this_warp_block_id[wv] <= core_warp_block_id[i*WARPS_PER_CORE + wv];
-                    this_warp_thread_count[wv] <= core_warp_thread_count[i*WARPS_PER_CORE + wv];
-                end
+                assign this_warp_block_id[wv] = core_warp_block_id[i*WARPS_PER_CORE + wv];
+                assign this_warp_thread_count[wv] = core_warp_thread_count[i*WARPS_PER_CORE + wv];
             end
 
             // EDA: We create separate signals here to pass to cores because of a requirement
