@@ -49,7 +49,8 @@ module core #(
     wire [(WARPS_PER_CORE > 1 ? $clog2(WARPS_PER_CORE) : 1)-1:0] current_warp;
     wire [7:0] warp_pc [WARPS_PER_CORE-1:0];
     wire [2:0] warp_state [WARPS_PER_CORE-1:0];
-    wire [7:0] warp_next_pc [WARPS_PER_CORE-1:0];
+    wire [7:0] thread_pc [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0];
+    wire [WARPS_PER_CORE*THREADS_PER_BLOCK-1:0] active_mask;
 
     // per-warp decoded 信号
     wire [3:0] dec_rd [WARPS_PER_CORE-1:0];
@@ -116,9 +117,11 @@ module core #(
         .decoded_ret(cur_ret),
         .fetcher_state(fetcher_state),
         .lsu_state(lsu_state),
-        .warp_next_pc(warp_next_pc),
+        .next_pc(next_pc),
         .current_pc(current_pc),
         .warp_pc(warp_pc),
+        .thread_pc(thread_pc),
+        .active_mask(active_mask),
         .warp_state(warp_state),
         .current_warp(current_warp),
         .core_state(core_state),
@@ -150,15 +153,13 @@ module core #(
                 .decoded_ret(dec_ret[w])
             );
 
-            // 代表线程（最低索引）的 next_pc 作为该 warp 的 warp_next_pc
-            assign warp_next_pc[w] = next_pc[w*THREADS_PER_BLOCK + 0];
 
             for (i = 0; i < THREADS_PER_BLOCK; i = i + 1) begin : threads
                 localparam integer p = w*THREADS_PER_BLOCK + i;
 
                 alu alu_instance (
                     .clk(clk), .reset(reset),
-                    .enable(i < warp_thread_count[w]),
+                    .enable((i < warp_thread_count[w]) && active_mask[p]),
                     .core_state(warp_state[w]),
                     .decoded_alu_arithmetic_mux(dec_alu_arith[w]),
                     .decoded_alu_output_mux(dec_alu_out_mux[w]),
@@ -167,7 +168,7 @@ module core #(
 
                 lsu lsu_instance (
                     .clk(clk), .reset(reset),
-                    .enable(i < warp_thread_count[w]),
+                    .enable((i < warp_thread_count[w]) && active_mask[p]),
                     .core_state(warp_state[w]),
                     .decoded_mem_read_enable(dec_mem_re[w]),
                     .decoded_mem_write_enable(dec_mem_we[w]),
@@ -190,7 +191,7 @@ module core #(
                     .DATA_BITS(DATA_MEM_DATA_BITS)
                 ) register_instance (
                     .clk(clk), .reset(reset),
-                    .enable(i < warp_thread_count[w]),
+                    .enable((i < warp_thread_count[w]) && active_mask[p]),
                     .block_id(warp_block_id[w]),
                     .core_state(warp_state[w]),
                     .decoded_reg_write_enable(dec_reg_we[w]),
@@ -208,14 +209,14 @@ module core #(
                     .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS)
                 ) pc_instance (
                     .clk(clk), .reset(reset),
-                    .enable(i < warp_thread_count[w]),
+                    .enable((i < warp_thread_count[w]) && active_mask[p]),
                     .core_state(warp_state[w]),
                     .decoded_nzp(dec_nzp[w]),
                     .decoded_immediate(dec_imm[w]),
                     .decoded_nzp_write_enable(dec_nzp_we[w]),
                     .decoded_pc_mux(dec_pc_mux[w]),
                     .alu_out(alu_out[p]),
-                    .current_pc(warp_pc[w]),
+                    .current_pc(thread_pc[p]),
                     .next_pc(next_pc[p]),
                     .nzp(thread_nzp[p])
                 );

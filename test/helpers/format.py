@@ -132,6 +132,7 @@ def format_cycle(dut, cycle_id: int, thread_id: Optional[int] = None):
             f"fetcher_state={fetcher_state}  PC={current_pc}  instr={instr}  done={done}"
         )
 
+        sched = _safe(lambda: ci.scheduler_instance, None)
         warps = _safe(lambda: list(ci.warps), [])
         for w, warp in enumerate(warps):
             wstate = _safe(lambda: format_core_state(str(warp.threads[0].alu_instance.core_state.value)))
@@ -140,8 +141,11 @@ def format_cycle(dut, cycle_id: int, thread_id: Optional[int] = None):
 
             threads = _safe(lambda: list(warp.threads), [])
             for t, thread in enumerate(threads):
+                p = w * len(threads) + t
                 lsu = _safe(lambda: format_lsu_state(str(thread.lsu_instance.lsu_state.value)))
+                act = _safe(lambda: int(sched.active_mask[p].value))
+                tpc = _safe(lambda: int(str(sched.thread_pc[p].value), 2))
                 rs = _safe(lambda: int(str(thread.register_instance.rs.value), 2))
                 rt = _safe(lambda: int(str(thread.register_instance.rt.value), 2))
                 regs = _safe(lambda: format_registers([str(item.value) for item in thread.register_instance.registers]))
-                logger.debug(f"    thread {w}.{t}: lsu={lsu}  RS={rs} RT={rt}  [{regs}]")
+                logger.debug(f"    thread {w}.{t}: act={act} tpc={tpc} lsu={lsu}  RS={rs} RT={rt}  [{regs}]")
