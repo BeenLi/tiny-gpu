@@ -102,7 +102,7 @@ make test_matmul
 
 - ✅ **Branch divergence（min-PC active mask）** —— 已完成（分支 `stage5-branch-divergence`）。每线程持有 `thread_pc[i]`，每拍 fetch 最小 PC、只执行 `active_mask` 内线程，PC 重合自动重收敛；支持 per-thread RET。验证 kernel：`test_relu`（if/else）+ `test_divloop`（变长循环，partial done_mask）；matadd/matmul 回归零偏移。详见 [设计文档](stage5_branch_divergence.md) 与 [实现计划](stage5_branch_divergence_plan.md)。
 - ✅ **Predication 对照实验（PSTR）** —— 已完成（分支 `stage5-predication`）。新增谓词化存储指令 `PSTR`（复用 BRnzp 的 `(nzp & cond)!=0`），把阈值 ReLU 写成**无分支**版：两条 PSTR 直线条件提交、无 min-PC 串行。实测 **198→176 cycle（省 22 拍）**，回归零偏移。分析了「分叉块纯赚、收敛块反而更慢」的谓词权衡。详见 [谓词化实验](stage5_predication_experiment.md)。
-- ⬜ **Warp scheduling（多 warp 驻留 + 交错调度）** —— 第二阶段，待开。
+- ✅ **Warp scheduling（多 warp 驻留 + 交错调度）** —— 已完成（分支 `stage6-warp-scheduling`）。每核驻留 `WARPS_PER_CORE`(=2) 个 warp，6 阶段 FSM per-warp 化，遇 LDR/STR 挂起并轮转切换（switch-on-stall），挂起 warp 的 LSU 后台自主跑完（每 warp 一份 decoder 保持 `decoded_mem_*`）；实测 `test_warpadd` **348→~274 cycle（省 ~21%）**。详见 [设计文档](stage6_warp_scheduling.md)、[实现计划](stage6_warp_scheduling_plan.md)、[结果](stage6_warp_scheduling_results.md)。
 
 ---
 

@@ -124,7 +124,7 @@ A 内存回来后择机 resume 写回。原来整核干等的 N 拍被 B 的计�
 
 ### `scheduler.sv` → warp scheduler（改动最大，基本重写）
 - 新增 per-warp 数组：`wstate[w]`、`warp_pc[w]`、`warp_done[w]`、
-  `warp_block_id[w]`、`warp_thread_count[w]`；标量 `current_warp`、`rr_ptr`（轮转指针）。
+  `warp_block_id[w]`、`warp_thread_count[w]`；标量 `current_warp`（无独立轮转指针，切换时从 `current_warp+1` 起依次扫描 `cand=(current_warp+k)%W`，k=1..W，选首个可推进 warp）。
 - 输入 `lsu_state` 由 `[T]` 扩成 `[W][T]`；用于 §3.3 的 resume 判据。
 - 逻辑：步进 `current_warp.wstate`；REQUEST 后按 `decoded_mem_*[current_warp]` 决定 park 还是直通 EXECUTE；
   park/RET 时跑就绪集轮转选新 current；resume 挂起 warp 到 EXECUTE。
