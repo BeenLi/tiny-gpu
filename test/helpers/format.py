@@ -10,7 +10,7 @@ def format_register(register: int) -> str:
         return f"%blockDim"
     if register == 15:
         return f"%threadIdx"
-    
+
 def format_instruction(instruction: str) -> str:
     opcode = instruction[0:4]
     rd = format_register(int(instruction[4:8], 2))
@@ -92,50 +92,56 @@ def format_registers(registers: List[str]) -> str:
         reg_idx = 15 - i # Register data is provided in reverse order
         formatted_registers.append(f"{format_register(reg_idx)} = {decimal_value}")
     formatted_registers.reverse()
-    return ', '.join(formatted_registers)
+    return ", ".join(formatted_registers)
 
+def _safe(fn, default="?"):
+    """Evaluate fn() and swallow any error (uninitialized signal, missing handle, x/z)."""
+    try:
+        return fn()
+    except Exception:
+        return default
+
+# Stage 6 warp-scheduling hierarchy:
+#   dut.cores[c].core_instance
+#       .current_warp / .core_state / .fetcher_state / .current_pc / .done / .instruction  (core-level scalars)
+#       .warps[w].decoder_instance                                                          (per-warp decoder)
+#       .warps[w].threads[t].alu_instance.core_state  == warp_state[w] (FSM state of warp w)
+#       .warps[w].threads[t].lsu_instance.lsu_state
+#       .warps[w].threads[t].register_instance.rs / .rt / .registers
 def format_cycle(dut, cycle_id: int, thread_id: Optional[int] = None):
     logger.debug(f"\n================================== Cycle {cycle_id} ==================================")
 
-    for core in dut.cores:
-        # Not exactly accurate, but good enough for now
-        if int(str(dut.thread_count.value), 2) <= core.i.value * dut.THREADS_PER_BLOCK.value:
+    cores = _safe(lambda: list(dut.cores), [])
+    for core_idx, core in enumerate(cores):
+        ci = _safe(lambda: core.core_instance, None)
+        if ci is None:
             continue
 
-        logger.debug(f"\n+--------------------- Core {core.i.value} ---------------------+")
+        current_warp = _safe(lambda: int(str(ci.current_warp.value), 2))
+        core_state = _safe(lambda: format_core_state(str(ci.core_state.value)))
+        fetcher_state = _safe(lambda: format_fetcher_state(str(ci.fetcher_state.value)))
+        current_pc = _safe(lambda: int(str(ci.current_pc.value), 2))
+        done = _safe(lambda: str(ci.done.value))
+        instr = _safe(lambda: format_instruction(str(ci.instruction.value)))
 
-        instruction = str(core.core_instance.instruction.value)
-        for thread in core.core_instance.threads:
-            if int(thread.i.value) < int(str(core.core_instance.thread_count.value), 2): # if enabled
-                block_idx = core.core_instance.block_id.value
-                block_dim = int(core.core_instance.THREADS_PER_BLOCK)
-                thread_idx = thread.register_instance.THREAD_ID.value
-                idx = block_idx * block_dim + thread_idx
+        logger.debug(
+            f"\n+--------------------- Core {core_idx} ---------------------+"
+        )
+        logger.debug(
+            f"current_warp={current_warp}  core_state={core_state}  "
+            f"fetcher_state={fetcher_state}  PC={current_pc}  instr={instr}  done={done}"
+        )
 
-                rs = int(str(thread.register_instance.rs.value), 2)
-                rt = int(str(thread.register_instance.rt.value), 2)
+        warps = _safe(lambda: list(ci.warps), [])
+        for w, warp in enumerate(warps):
+            wstate = _safe(lambda: format_core_state(str(warp.threads[0].alu_instance.core_state.value)))
+            marker = " <== current" if current_warp == w else ""
+            logger.debug(f"  warp {w}: state={wstate}{marker}")
 
-                reg_input_mux = int(str(core.core_instance.decoded_reg_input_mux.value), 2)
-                alu_out = int(str(thread.alu_instance.alu_out.value), 2)
-                lsu_out = int(str(thread.lsu_instance.lsu_out.value), 2)
-                constant = int(str(core.core_instance.decoded_immediate.value), 2)
-
-                if (thread_id is None or thread_id == idx):
-                    logger.debug(f"\n+-------- Thread {idx} --------+")
-
-                    logger.debug("PC:", int(str(core.core_instance.current_pc.value), 2))
-                    logger.debug("Instruction:", format_instruction(instruction))
-                    logger.debug("Core State:", format_core_state(str(core.core_instance.core_state.value)))
-                    logger.debug("Fetcher State:", format_fetcher_state(str(core.core_instance.fetcher_state.value)))
-                    logger.debug("LSU State:", format_lsu_state(str(thread.lsu_instance.lsu_state.value)))
-                    logger.debug("Registers:", format_registers([str(item.value) for item in thread.register_instance.registers]))
-                    logger.debug(f"RS = {rs}, RT = {rt}")
-
-                    if reg_input_mux == 0:
-                        logger.debug("ALU Out:", alu_out)
-                    if reg_input_mux == 1:
-                        logger.debug("LSU Out:", lsu_out)
-                    if reg_input_mux == 2:
-                        logger.debug("Constant:", constant)
-
-        logger.debug("Core Done:", str(core.core_instance.done.value))
+            threads = _safe(lambda: list(warp.threads), [])
+            for t, thread in enumerate(threads):
+                lsu = _safe(lambda: format_lsu_state(str(thread.lsu_instance.lsu_state.value)))
+                rs = _safe(lambda: int(str(thread.register_instance.rs.value), 2))
+                rt = _safe(lambda: int(str(thread.register_instance.rt.value), 2))
+                regs = _safe(lambda: format_registers([str(item.value) for item in thread.register_instance.registers]))
+                logger.debug(f"    thread {w}.{t}: lsu={lsu}  RS={rs} RT={rt}  [{regs}]")
